@@ -1,0 +1,202 @@
+name: NothingsVN Xiaomi ROM Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      input_url:
+        description: 'URL of the ROM to build'
+        required: true
+      builder_name:
+        description: 'Builder name'
+        required: false
+      builder_id:
+        description: 'Builder ID'
+        required: false
+      install_mods:
+        description: 'Apply custom modifications'
+        required: false
+        type: boolean
+        default: true
+      install_toolbox:
+        description: 'Install KaoriOS Toolbox'
+        required: false
+        type: boolean
+        default: true
+      build_mode:
+        description: 'What to deliver: flash package, OTA package for NT Manager, or both'
+        required: false
+        type: choice
+        options:
+          - both
+          - fastboot
+          - ota
+        default: both
+
+jobs:
+  Initialize:
+    runs-on: ubuntu-latest
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+      INSTALL_MODS: ${{ inputs.install_mods }}
+      INSTALL_TOOLBOX: ${{ inputs.install_toolbox }}
+      BUILD_MODE: ${{ inputs.build_mode }}
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          swap-size-mb: 1024
+          root-reserve-mb: 512
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+
+      - name: Clean unused files and applications
+        run: |
+          docker rmi `docker images -q` || true
+          sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php /etc/sudo apt/sources.list.d || true
+          sudo apt -y purge azure-cli ghc* zulu* hhvm llvm* firefox google* dotnet* powershell mysql* php* || true
+          sudo apt -y autoremove --purge || true
+          sudo apt -y autoclean || true
+          sudo apt clean || true
+
+      - name: Clone private toolbuild source
+        uses: actions/checkout@v4
+        with:
+          repository: tiencv2006/nothingsvn_xiaomi-toolbuild
+          token: ${{ secrets.GH_TOKEN }}
+          path: toolbuild
+          lfs: true
+
+      - name: Send start notification
+        working-directory: toolbuild
+        run: |
+          pip install requests
+          python notify.py start "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
+
+      - name: Set timezone
+        run: |
+          echo "Setting Vietnam timezone"
+          sudo timedatectl set-timezone Asia/Ho_Chi_Minh
+
+      - name: Install OpenJDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install tools
+        working-directory: toolbuild
+        run: |
+          set -e
+          set -o pipefail
+          echo "[STEP] Install tools" | tee -a build_action.log
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test 2>&1 | tee -a build_action.log
+          sudo apt-get update 2>&1 | tee -a build_action.log
+          sudo apt-get install -y aria2 jq rclone sshpass python-is-python3 wget python3 lz4 xz-utils device-tree-compiler zlib1g-dev gcc g++ libc6 libstdc++6 python3-pip dialog libgtk-3-dev aapt busybox zip erofs-utils unzip p7zip-full zipalign zstd bc android-sdk-libsparse-utils xmlstarlet 2>&1 | tee -a build_action.log
+          sudo pip3 install ConfigObj 2>&1 | tee -a build_action.log
+          sudo pip3 install telebot 2>&1 | tee -a build_action.log
+          sudo pip3 install setuptools 2>&1 | tee -a build_action.log
+          sudo pip3 install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client 2>&1 | tee -a build_action.log
+
+      - name: Grant file permissions
+        working-directory: toolbuild
+        run: |
+          sudo chmod 777 -R *
+
+      - name: Build ROM
+        working-directory: toolbuild
+        env:
+          INPUT_URL: ${{ inputs.input_url }}
+          # Optional: OTA signing identity from secrets instead of bin/ota/keys
+          OTA_CERTIFICATE: ${{ secrets.OTA_CERTIFICATE }}
+        run: |
+          set -e
+          set -o pipefail
+          echo "[STEP] Build ROM" | tee -a build_action.log
+          sudo -E bash build.sh "$INPUT_URL" "${{ github.repository }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}" 2>&1 | tee -a build_action.log
+
+      - name: Pack ROM
+        working-directory: toolbuild
+        env:
+          OTA_PRIVATE_KEY: ${{ secrets.OTA_PRIVATE_KEY }}
+          OTA_CERTIFICATE: ${{ secrets.OTA_CERTIFICATE }}
+        run: |
+          set -e
+          set -o pipefail
+          python notify.py pack "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
+          echo "[STEP] Pack ROM" | tee -a build_action.log
+          sudo -E bash packROM.sh 2>&1 | tee -a build_action.log
+
+      - name: Set up Rclone
+        working-directory: toolbuild
+        run: |
+          set -e
+          set -o pipefail
+          echo "[STEP] Set up Rclone" | tee -a build_action.log
+          sudo -E bash uploadROM.sh setup "${{ secrets.GH_TOKEN }}" "${{ secrets.GH_REPO }}" "${{ secrets.RCLONE_TOKEN_PATH }}" 2>&1 | tee -a build_action.log
+
+      - name: Upload ROM to cloud
+        working-directory: toolbuild
+        env:
+          NTAPI_URL: ${{ secrets.NTAPI_URL }}
+          OTA_BUILD_SECRET: ${{ secrets.OTA_BUILD_SECRET }}
+        run: |
+          set -e
+          set -o pipefail
+          python notify.py upload "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
+          echo "[STEP] Upload ROM to cloud" | tee -a build_action.log
+          sudo -E bash uploadROM.sh 2>&1 | tee -a build_action.log
+
+      - name: Send success notification
+        if: success()
+        working-directory: toolbuild
+        env:
+          NOTIFY_WORKFLOW_CONCLUSION: success
+        run: |
+          python notify.py success "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
+
+      - name: Send failure notification
+        if: failure()
+        working-directory: toolbuild
+        env:
+          NOTIFY_WORKFLOW_CONCLUSION: failure
+          NOTIFY_ERROR_LOG: build_action.log
+        run: |
+          python notify.py fail "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
+
+      - name: Send cancellation notification
+        if: cancelled()
+        working-directory: toolbuild
+        env:
+          NOTIFY_WORKFLOW_CONCLUSION: cancelled
+          NOTIFY_ERROR_LOG: build_action.log
+          NOTIFY_ERROR_REASON: Workflow run was cancelled before completion.
+        run: |
+          python notify.py cancelled "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
+
+      # NT Manager app: ntapi marks the build finished, stores the download links and pushes a
+      # notification to the device that requested it. Runs for bot builds too (ntapi ignores those).
+      - name: Report result to NT API
+        if: always()
+        continue-on-error: true
+        env:
+          NTAPI_URL: ${{ secrets.NTAPI_URL }}
+          OTA_BUILD_SECRET: ${{ secrets.OTA_BUILD_SECRET }}
+          INPUT_URL: ${{ inputs.input_url }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          if [ -z "$NTAPI_URL" ] || [ -z "$OTA_BUILD_SECRET" ]; then
+            echo "NTAPI_URL / OTA_BUILD_SECRET not set, result not sent to NT API"
+            exit 0
+          fi
+          link() { head -n 1 "toolbuild/bin/ddevice/$1" 2>/dev/null | tr -d '\r\n' || true; }
+          download="$(link gdrive_link.txt)"
+          [ -n "$download" ] || download="$(link download_link.txt)"
+          jq -n --arg runId "$RUN_ID" --arg status "$JOB_STATUS" --arg romUrl "$INPUT_URL" \
+            --arg downloadUrl "$download" --arg otaUrl "$(link gdrive_ota_link.txt)" \
+            '{runId: ($runId | tonumber), status: $status, romUrl: $romUrl, downloadUrl: $downloadUrl, otaUrl: $otaUrl}' \
+            | curl -sS -m 30 --retry 3 -X POST "${NTAPI_URL%/}/api/toolbox/build" \
+                -H "Authorization: Bearer $OTA_BUILD_SECRET" -H "content-type: application/json" \
+                --data-binary @- || echo "NT API did not accept the build result"

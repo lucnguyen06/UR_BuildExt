@@ -32,6 +32,9 @@ on:
           - ota
         default: both
 
+permissions:
+  contents: read
+
 jobs:
   Initialize:
     runs-on: ubuntu-latest

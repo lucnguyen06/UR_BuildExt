@@ -63,7 +63,7 @@ jobs:
       - name: Clone private toolbuild source
         uses: actions/checkout@v4
         with:
-          repository: tiencv2006/nothingsvn_xiaomi-toolbuild
+          repository: lucnguyen06/xiaomi-rom-builder
           token: ${{ secrets.GH_TOKEN }}
           path: toolbuild
           lfs: true

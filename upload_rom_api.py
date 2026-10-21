@@ -1,10 +1,12 @@
 ﻿import os
 import pickle
 import sys
+import json
 import argparse
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
 import difflib
 
 # Scopes needed for Drive API (Uploading files)
@@ -15,8 +17,23 @@ def get_credentials():
     # Adjust path if token.pickle is in a different directory
     token_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'token.pickle')
     if os.path.exists(token_path):
-        with open(token_path, 'rb') as token:
-            creds = pickle.load(token)
+        try:
+            # Try pickle format first (binary)
+            with open(token_path, 'rb') as token:
+                creds = pickle.load(token)
+        except (pickle.UnpicklingError, ValueError, EOFError) as pickle_err:
+            # If pickle fails, try JSON format (text)
+            try:
+                print("Pickle format failed, attempting JSON format...")
+                with open(token_path, 'r') as token:
+                    token_data = json.load(token)
+                    # Convert JSON token data to credentials object
+                    creds = Credentials.from_authorized_user_info(token_data)
+            except (json.JSONDecodeError, ValueError, KeyError) as json_err:
+                print(f"Error: Invalid token file format at {token_path}")
+                print(f"  Pickle error: {pickle_err}")
+                print(f"  JSON error: {json_err}")
+                sys.exit(1)
             
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:

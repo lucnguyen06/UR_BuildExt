@@ -1,0 +1,23 @@
+# Sensitive files - DO NOT COMMIT
+credentials.json
+token.pickle
+*.pickle
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp
+*.tmp
+uploadROM_raw.txt

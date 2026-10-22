@@ -1,39 +1,24 @@
-﻿import os
+import os
 import pickle
 import sys
-import json
 import argparse
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
 import difflib
 
-# Scopes needed for Drive API (Uploading files)
-SCOPES = ['https://www.googleapis.com/auth/drive.file']
+# Full Drive scope is REQUIRED because we upload into a pre-existing shared folder.
+# 'drive.file' only permits files created by the app itself and causes
+# 403 insufficientParentPermissions on foreign parent folders.
+SCOPES = ['https://www.googleapis.com/auth/drive']
 
 def get_credentials():
     creds = None
     # Adjust path if token.pickle is in a different directory
     token_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'token.pickle')
     if os.path.exists(token_path):
-        try:
-            # Try pickle format first (binary)
-            with open(token_path, 'rb') as token:
-                creds = pickle.load(token)
-        except (pickle.UnpicklingError, ValueError, EOFError) as pickle_err:
-            # If pickle fails, try JSON format (text)
-            try:
-                print("Pickle format failed, attempting JSON format...")
-                with open(token_path, 'r') as token:
-                    token_data = json.load(token)
-                    # Convert JSON token data to credentials object
-                    creds = Credentials.from_authorized_user_info(token_data)
-            except (json.JSONDecodeError, ValueError, KeyError) as json_err:
-                print(f"Error: Invalid token file format at {token_path}")
-                print(f"  Pickle error: {pickle_err}")
-                print(f"  JSON error: {json_err}")
-                sys.exit(1)
+        with open(token_path, 'rb') as token:
+            creds = pickle.load(token)
             
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
@@ -48,13 +33,21 @@ def get_credentials():
     return creds
 
 def get_or_create_folder(service, folder_name, parent_id=None):
-    query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+    # Escape single quotes for the Drive query language.
+    safe_name = folder_name.replace("'", "\\'")
+    query = f"name='{safe_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
     if parent_id:
         query += f" and '{parent_id}' in parents"
-        
-    results = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
+
+    results = service.files().list(
+        q=query,
+        spaces='drive',
+        fields='files(id, name)',
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True,
+    ).execute()
     files = results.get('files', [])
-    
+
     if files:
         return files[0].get('id')
     else:
@@ -64,7 +57,11 @@ def get_or_create_folder(service, folder_name, parent_id=None):
         }
         if parent_id:
             file_metadata['parents'] = [parent_id]
-        folder = service.files().create(body=file_metadata, fields='id').execute()
+        folder = service.files().create(
+            body=file_metadata,
+            fields='id',
+            supportsAllDrives=True,
+        ).execute()
         return folder.get('id')
 
 def resolve_path(service, path, root_folder_id=None):
@@ -84,7 +81,13 @@ def delete_similar_files(service, folder_id, new_file_name, threshold=0.8):
         return
     try:
         query = f"'{folder_id}' in parents and trashed=false"
-        results = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
+        results = service.files().list(
+            q=query,
+            spaces='drive',
+            fields='files(id, name)',
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+        ).execute()
         files = results.get('files', [])
         
         parts = new_file_name.split('_')
@@ -101,13 +104,13 @@ def delete_similar_files(service, folder_id, new_file_name, threshold=0.8):
             ratio = difflib.SequenceMatcher(None, new_file_name, fname).ratio()
             if ratio > threshold:
                 print(f"Found older build '{fname}' with same build type (similarity: {ratio:.2f}). Deleting...")
-                service.files().delete(fileId=f.get('id')).execute()
+                service.files().delete(fileId=f.get('id'), supportsAllDrives=True).execute()
                 print(f"Deleted {fname} successfully.")
     except Exception as e:
         print(f"Warning: could not process or delete similar file: {e}")
 
 def make_shareable(service, file_id):
-    """Cß║Ñp quyß╗ün ─æß╗ìc cho bß║Ñt kß╗│ ai c├│ link, ─æß╗â ng╞░ß╗¥i build tß║úi ─æ╞░ß╗úc ROM."""
+    """Cấp quyền đọc cho bất kỳ ai có link, để người build tải được ROM."""
     try:
         service.permissions().create(
             fileId=file_id,
@@ -159,7 +162,8 @@ def upload_rom(file_path, folder_id=None, path=None, share=False, link_out=None)
         
         request = service.files().create(body=file_metadata,
                                          media_body=media,
-                                         fields='id, webViewLink')
+                                         fields='id, webViewLink',
+                                         supportsAllDrives=True)
 
         response = None
         while response is None:

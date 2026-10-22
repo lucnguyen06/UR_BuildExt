@@ -1,41 +1,43 @@
-﻿from google_auth_oauthlib.flow import Flow
+"""Regenerate token.pickle with full Drive scope.
+
+Usage (on your own PC, NOT on GitHub Actions):
+    pip install google-auth-oauthlib google-api-python-client
+    python gen_token.py
+
+It reads credentials.json (OAuth Desktop client from Google Cloud Console),
+opens the browser for consent, then writes token.pickle in this folder.
+Upload that token.pickle to your private config repo (lucnguyen06/config-files),
+next to rclone.conf.
+
+IMPORTANT: the old token was created with scope drive.file which cannot write
+into a pre-existing shared folder -> 403 insufficientParentPermissions.
+This script uses scope https://www.googleapis.com/auth/drive.
+"""
+import os
 import pickle
 
-SCOPES = ['https://www.googleapis.com/auth/drive.file']
+from google_auth_oauthlib.flow import InstalledAppFlow
 
-# Load client config from credentials.json
-with open('credentials.json', 'r') as f:
-    import json
-    client_config = json.load(f)
+SCOPES = ['https://www.googleapis.com/auth/drive']
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Use console flow (paste URL into browser manually, paste code back)
-flow = Flow.from_client_config(
-    client_config,
-    scopes=SCOPES,
-    redirect_uri='urn:ietf:wg:oauth:2.0:oob'
-)
 
-auth_url, _ = flow.authorization_url(prompt='consent')
-print('\n' + '='*60)
-print('STEP 1: Open this URL in your browser:')
-print('='*60)
-print(auth_url)
-print('='*60)
-print('\nSTEP 2: After authorizing, copy the authorization code')
-print('STEP 3: Paste it below and press ENTER\n')
+def main():
+    creds_file = os.path.join(BASE_DIR, 'credentials.json')
+    token_file = os.path.join(BASE_DIR, 'token.pickle')
+    if not os.path.exists(creds_file):
+        print(f"Missing {creds_file}.")
+        print("Get it from Google Cloud Console > APIs & Services > Credentials >")
+        print("Create Credentials > OAuth client ID > Desktop app, then download JSON")
+        print("and save it as credentials.json next to this script.")
+        raise SystemExit(1)
+    flow = InstalledAppFlow.from_client_secrets_file(creds_file, SCOPES)
+    creds = flow.run_local_server(port=0)
+    with open(token_file, 'wb') as f:
+        pickle.dump(creds, f)
+    print(f"OK - wrote {token_file}")
+    print("Now upload it to your private config repo (same folder as rclone.conf).")
 
-while True:
-    code = input('Enter authorization code: ').strip()
-    if code:
-        break
-    print('Code cannot be empty! Please try again.')
 
-try:
-    flow.fetch_token(code=code)
-    with open('token.pickle', 'wb') as token:
-        pickle.dump(flow.credentials, token)
-    print('\n✅ SUCCESS - token.pickle created!')
-except Exception as e:
-    print(f'\n❌ ERROR: {e}')
-    print('Please try again with a valid authorization code.')
-    exit(1)
+if __name__ == '__main__':
+    main()

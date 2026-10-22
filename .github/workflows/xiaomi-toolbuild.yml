@@ -102,18 +102,19 @@ jobs:
           sudo pip3 install setuptools 2>&1 | tee -a build_action.log
           sudo pip3 install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client 2>&1 | tee -a build_action.log
 
-      - name: Setup Google Drive credentials
+      - name: Setup Google Drive token
         working-directory: toolbuild
         env:
-          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          TOKEN_PICKLE_B64: ${{ secrets.TOKEN_PICKLE_B64 }}
         run: |
-          if [ -z "$GOOGLE_CREDENTIALS" ]; then
-            echo "Warning: GOOGLE_CREDENTIALS secret not set. Upload to Drive will fail."
-            echo "{}" > credentials.json
+          if [ -z "$TOKEN_PICKLE_B64" ]; then
+            echo "Warning: TOKEN_PICKLE_B64 secret not set. Upload to Drive will fail."
+            echo "To fix: Run 'python gen_token.py' locally, then base64 encode token.pickle"
+            echo "and set it as GitHub secret TOKEN_PICKLE_B64"
           else
-            echo "$GOOGLE_CREDENTIALS" > credentials.json
+            echo "$TOKEN_PICKLE_B64" | base64 -d > token.pickle
+            echo "token.pickle restored from secret."
           fi
-          echo "Credentials file created."
 
       - name: Grant file permissions
         working-directory: toolbuild

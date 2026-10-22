@@ -1,23 +1,22 @@
-# Sensitive files - DO NOT COMMIT
-credentials.json
+# Sensitive files - Never commit credentials
 token.pickle
-*.pickle
+credentials.json
+*.json
+!.gitignore
 
-# Build artifacts
-build/
-dist/
+# Temporary test files
+test_upload.txt
+gen_token_manual.py
+gen_token_simple.py
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
 *.egg-info/
+.env
 
 # IDE
 .vscode/
 .idea/
 *.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Temp
-*.tmp
-uploadROM_raw.txt

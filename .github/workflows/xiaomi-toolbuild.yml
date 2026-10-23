@@ -101,12 +101,27 @@ jobs:
           sudo pip3 install telebot 2>&1 | tee -a build_action.log
           sudo pip3 install setuptools 2>&1 | tee -a build_action.log
           sudo pip3 install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client 2>&1 | tee -a build_action.log
+          # bin/vbpatch.py imports the "lz4" python module to unpack vendor_boot.
+          # The apt package above only ships the lz4 CLI, so without this the
+          # import fails, vendor_boot fstab keeps its avb= flags, and the build
+          # silently ships a vbmeta that does not match the repacked partitions.
+          sudo pip3 install lz4 2>&1 | tee -a build_action.log
+          python3 -c "import lz4, lz4.block, lz4.frame" && echo "[STEP] python lz4 OK" | tee -a build_action.log
 
-      - name: Setup Google Drive token
+      - name: Setup Google Drive credentials and token
         working-directory: toolbuild
         env:
+          CREDENTIALS_JSON_B64: ${{ secrets.CREDENTIALS_JSON_B64 }}
           TOKEN_PICKLE_B64: ${{ secrets.TOKEN_PICKLE_B64 }}
         run: |
+          if [ -z "$CREDENTIALS_JSON_B64" ]; then
+            echo "Warning: CREDENTIALS_JSON_B64 secret not set. Upload to Drive will fail."
+            echo "To fix: base64 encode credentials.json and set it as GitHub secret CREDENTIALS_JSON_B64"
+          else
+            echo "$CREDENTIALS_JSON_B64" | base64 -d > credentials.json
+            echo "credentials.json restored from secret."
+          fi
+          
           if [ -z "$TOKEN_PICKLE_B64" ]; then
             echo "Warning: TOKEN_PICKLE_B64 secret not set. Upload to Drive will fail."
             echo "To fix: Run 'python gen_token.py' locally, then base64 encode token.pickle"
